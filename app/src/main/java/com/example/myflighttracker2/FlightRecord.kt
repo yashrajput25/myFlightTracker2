@@ -1,7 +1,9 @@
+package com.example.myflighttracker2
+
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
-@Entity
+@Entity(tableName = "flights")
 data class FlightRecord(
     @PrimaryKey(autoGenerate = true) val id:Int = 0,
     val flightNumber: String,
