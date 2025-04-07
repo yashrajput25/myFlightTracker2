@@ -1,23 +1,31 @@
 package com.example.myflighttracker2
 
 import android.annotation.SuppressLint
+import android.os.Build
 import android.os.Bundle
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,66 +35,85 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.lifecycleScope
+import androidx.room.Room
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import com.example.myflighttracker2.ui.theme.MyFlightTracker2Theme
+import kotlinx.coroutines.launch
+import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
+    private lateinit var db: AppDatabase
+    @RequiresApi(Build.VERSION_CODES.O)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        db = Room.databaseBuilder(
+            applicationContext,
+            AppDatabase::class.java,
+            "flight-db"
+        ).build()
+
+
+
         setContent {
-            FlightTrackerApp();
-        }
-    }
-}
 
-@Composable
-fun FlightTrackerApp() {
-    var flightNumber by remember { mutableStateOf("") }
-    var showWebView by remember { mutableStateOf(false) }
+            var flightAverages by remember { mutableStateOf(listOf<AvgTime>()) }
 
-    Column(modifier = Modifier.padding(16.dp)) {
-        Text("Enter Flight Number:", style = MaterialTheme.typography.headlineLarge)
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        TextField(
-            value = flightNumber,
-            onValueChange = { flightNumber = it },
-            label = { Text("e.g., AI101") },
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Button(
-            onClick = { showWebView = true },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Track Flight")
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        if (showWebView && flightNumber.isNotBlank()) {
-            val query = "https://www.google.com/search?q=flight+$flightNumber+status"
-            FlightWebView(url = query)
-        }
-    }
-
-}
-
-@SuppressLint("SetJavaScriptEnabled")
-@Composable
-fun FlightWebView(url: String) {
-    val context = LocalContext.current
-    AndroidView(
-        factory = {
-            WebView(context).apply {
-                webViewClient = WebViewClient()
-                settings.javaScriptEnabled = true
-                loadUrl(url)
+            // Fetch average durations on launch
+            LaunchedEffect(Unit) {
+                flightAverages = db.flightDao().getAverageTimePerFlight()
             }
-        },
-        modifier = Modifier.fillMaxSize()
-    )
+
+            Surface(modifier = Modifier.fillMaxSize()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Flight Average Duration", style = MaterialTheme.typography.headlineSmall)
+                    Spacer(modifier = Modifier.height(10.dp))
+                    AverageTimeUI(flightAverages)
+                }
+            }
+        }
+        lifecycleScope.launch {
+            val fakeFlights = fetchFlightData()
+            fakeFlights.forEach {
+                db.flightDao().insertFlight(it)
+            }
+        }
+
+    }
+    private fun scheduleBackgroundJob() {
+        val request = PeriodicWorkRequestBuilder<FlightDataWorker>(
+            1, TimeUnit.DAYS
+        ).build()
+
+        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
+            "FlightDataFetcher",
+            ExistingPeriodicWorkPolicy.KEEP,
+            request
+        )
+    }
+
+
 }
+
+@Composable
+fun AverageTimeUI(flightAverages: List<AvgTime>) {
+    LazyColumn {
+        items(flightAverages) { avg ->
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 6.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Flight Number: ${avg.flightNumber}")
+                    Text("Avg Duration: ${"%.2f".format(avg.avgDuration)} minutes")
+                }
+            }
+        }
+    }
+}
+
+
